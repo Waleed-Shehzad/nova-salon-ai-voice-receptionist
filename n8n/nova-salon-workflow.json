@@ -1,0 +1,406 @@
+{
+  "name": "nova-salon-availability",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "nova-salon-availability",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        -208,
+        -224
+      ],
+      "id": "4fdf1f27-80f9-45d7-b259-2987ecd4c797",
+      "name": "Receive Availability Request"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "e57a25a6-c554-4b29-b7d4-bb0c0297af5c",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        -224
+      ],
+      "id": "c495a6ea-c80b-4c03-afa6-e76b49ff3712",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "resource": "calendar",
+        "calendar": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_GOOGLE_CALENDAR_ID",
+          "mode": "list"
+        },
+        "timeMin": "={{ $json.start }}",
+        "timeMax": "={{ $json.end }}",
+        "options": {
+          "outputFormat": "availability",
+          "timezone": {
+            "__rl": true,
+            "value": "Asia/Karachi",
+            "mode": "list",
+            "cachedResultName": "Asia/Karachi"
+          }
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        464,
+        -320
+      ],
+      "id": "006b13e5-896a-4066-bb07-9c7585f7f561",
+      "name": "Get availability in a calendar"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst calendar = $input.first().json;\n\n// Get the original appointment details\nconst appointment = $('Validate Appointment').first().json;\n\n// Read availability from Google Calendar\nconst available = calendar.available;\n\n// Ensure Calendar returned a valid result\nif (typeof available !== 'boolean') {\n  throw new Error('Invalid Google Calendar availability response');\n}\n\n// Prepare response for Ava\nreturn [{\n  json: {\n    success: true,\n    available: available,\n    service: appointment.service,\n    date: appointment.date,\n    time: appointment.time,\n    start: appointment.start,\n    end: appointment.end,\n    time_zone: appointment.time_zone,\n    message: available\n      ? 'The requested appointment slot is available but not yet booked.'\n      : 'The requested appointment slot is unavailable. Please ask the customer to choose another time.'\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        688,
+        -320
+      ],
+      "id": "29318a33-7bcc-4a23-b432-4146da91dd96",
+      "name": "Format Availability Response"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1136,
+        -224
+      ],
+      "id": "60cb487c-911b-4621-8f87-f8708feb34d1",
+      "name": "Return Availability to Ava"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        464,
+        -128
+      ],
+      "id": "ac669a42-be1d-47c3-a444-6e168ef0739b",
+      "name": "Return Invalid Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst body = $input.first().json.body || {};\nconst zone = 'Asia/Karachi';\n\n// Salon services and appointment durations\nconst services = {\n  haircut: 45,\n  blowout: 45,\n  coloring: 120,\n  conditioning: 30\n};\n\nconst service = String(body.service || '').trim().toLowerCase();\nconst date = String(body.date || '').trim();\nconst time = String(body.time || '').trim();\n\nfunction reject(message) {\n  return [{\n    json: {\n      valid: false,\n      available: false,\n      message\n    }\n  }];\n}\n\n// Check service\nif (!services[service]) {\n  return reject('Invalid salon service.');\n}\n\n// Check date and time format\nif (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) ||\n    !/^([01]\\d|2[0-3]):[0-5]\\d$/.test(time)) {\n  return reject('Invalid date or time format.');\n}\n\n// Interpret appointment in Islamabad, Pakistan timezone\nconst start = DateTime.fromISO(`${date}T${time}`, { zone });\n\nif (!start.isValid ||\n    start.toFormat('yyyy-MM-dd') !== date ||\n    start.toFormat('HH:mm') !== time) {\n  return reject('Invalid appointment date or time.');\n}\n\nconst duration = services[service];\nconst end = start.plus({ minutes: duration });\n\n// Salon is open Tuesday through Saturday\nif (start.weekday < 2 || start.weekday > 6) {\n  return reject('Nova Salon is closed on Sunday and Monday.');\n}\n\n// Opening hours: 9 AM to 6 PM\nif (\n  start.hour < 9 ||\n  end.toISODate() !== start.toISODate() ||\n  end.hour > 18 ||\n  (end.hour === 18 && end.minute > 0)\n) {\n  return reject('Appointment is outside salon working hours.');\n}\n\n// Minimum 2 hours' notice\nconst now = DateTime.now().setZone(zone);\n\nif (start.toMillis() < now.plus({ hours: 2 }).toMillis()) {\n  return reject('Appointments require at least 2 hours notice.');\n}\n\n// Maximum 30 days in advance\nif (start.toMillis() > now.plus({ days: 30 }).toMillis()) {\n  return reject('Appointments can only be booked 30 days ahead.');\n}\n\n// Valid appointment request\nreturn [{\n  json: {\n    valid: true,\n    service,\n    date,\n    time,\n    duration_minutes: duration,\n    start: start.toISO(),\n    end: end.toISO(),\n    time_zone: zone\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        -224
+      ],
+      "id": "383533fb-5cc3-4c1e-9dd3-65dc537bc6fc",
+      "name": "Validate Appointment"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "d23c7960-530e-4a2e-9311-20cb6dbdae00",
+              "leftValue": "={{ $('Receive Availability Request').first().json.body?.action === 'book' && $json.available === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        912,
+        -320
+      ],
+      "id": "1ae08e3d-8c04-43a3-9a94-f4a366ef71e5",
+      "name": "Booking Requested?"
+    },
+    {
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_GOOGLE_CALENDAR_ID",
+          "mode": "list"
+        },
+        "start": "={{ $json.start }}",
+        "end": "={{ $json.end }}",
+        "additionalFields": {
+          "description": "={{ 'Customer: ' + $('Receive Availability Request').first().json.body.customer_name + '\\nEmail: ' + $('Receive Availability Request').first().json.body.customer_email + '\\nService: ' + $json.service }}",
+          "showMeAs": "opaque",
+          "summary": "={{ 'Nova Salon - ' + $json.service + ' - ' + $('Receive Availability Request').first().json.body.customer_name }}"
+        }
+      },
+      "type": "n8n-nodes-base.googleCalendar",
+      "typeVersion": 1.3,
+      "position": [
+        1360,
+        -512
+      ],
+      "id": "d0f5af20-eabc-4516-9104-20f931dce7bf",
+      "name": "Create Appointment"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "78676493-a8d8-40b8-9d44-13b526106622",
+              "leftValue": "={{ $('Receive Availability Request').first().json.body?.confirmed === true && typeof $('Receive Availability Request').first().json.body?.customer_name === 'string' && $('Receive Availability Request').first().json.body.customer_name.trim().length >= 2 && /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test($('Receive Availability Request').first().json.body?.customer_email || '') }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1136,
+        -416
+      ],
+      "id": "b2e69b88-e1d3-4cdb-994e-69be80b205da",
+      "name": "Customer Confirmed?"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst event = $input.first().json;\nconst request = $('Receive Availability Request').first().json.body;\n\n// Verify that Google Calendar created an event\nif (!event.id) {\n  throw new Error('Google Calendar did not return an event ID.');\n}\n\nreturn [{\n  json: {\n    success: true,\n    booked: true,\n    booking_id: event.id,\n    customer_name: request.customer_name,\n    customer_email: request.customer_email,\n    service: request.service,\n    date: request.date,\n    time: request.time,\n    time_zone: 'Asia/Karachi',\n    message: `Appointment successfully booked for ${request.customer_name}.`\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1584,
+        -512
+      ],
+      "id": "345acc7f-3444-4fdd-a030-c48d3b9a0b4a",
+      "name": "Format Booking Confirmation"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1808,
+        -512
+      ],
+      "id": "7b5ed9aa-d7f5-4bc1-af7e-7faf34cb5261",
+      "name": "Return Booking Confirmation to Ava"
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1360,
+        -320
+      ],
+      "id": "09c14d43-2319-4b52-83c5-d38ed9b00a3c",
+      "name": "Return Booking Rejection to Ava"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Receive Availability Request": {
+      "main": [
+        [
+          {
+            "node": "Validate Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Get availability in a calendar",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Invalid Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get availability in a calendar": {
+      "main": [
+        [
+          {
+            "node": "Format Availability Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Availability Response": {
+      "main": [
+        [
+          {
+            "node": "Booking Requested?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Appointment": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Booking Requested?": {
+      "main": [
+        [
+          {
+            "node": "Customer Confirmed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Availability to Ava",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Customer Confirmed?": {
+      "main": [
+        [
+          {
+            "node": "Create Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return Booking Rejection to Ava",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Appointment": {
+      "main": [
+        [
+          {
+            "node": "Format Booking Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Booking Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Return Booking Confirmation to Ava",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}

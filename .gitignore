@@ -1,0 +1,29 @@
+# Local configuration and secrets
+.env
+.env.*
+*.secret.json
+credentials.json
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
+
+# Private integrations and local execution state
+credentials*.json
+client_secret*.json
+token*.json
+secrets*.json
+*.pem
+*.key
+.n8n/
+node_modules/
+__pycache__/
+*.pyc
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*.db
+*.db-*
+execution-data/
